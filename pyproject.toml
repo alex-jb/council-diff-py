@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "council-diff"
+version = "0.1.0"
+description = "5-voice AI council for any decision. Python port of github.com/alex-jb/council-diff."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Alex Xiaoyu Ji", email = "xji1@mail.yu.edu" },
+]
+keywords = ["ai", "claude", "anthropic", "agents", "decision", "council", "multi-agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "anthropic>=0.40",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/alex-jb/council-diff-py"
+Repository = "https://github.com/alex-jb/council-diff-py"
+Issues = "https://github.com/alex-jb/council-diff-py/issues"
+
+[tool.setuptools.packages.find]
+include = ["council_diff*"]
