@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "council-diff"
-version = "0.1.0"
-description = "5-voice AI council for any decision. Python port of github.com/alex-jb/council-diff."
+version = "0.3.0"
+description = "5-voice AI council for any decision, with optional Claude Fable 5 Oracle adjudication. Python port of github.com/alex-jb/council-diff."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "Alex Xiaoyu Ji", email = "xji1@mail.yu.edu" },
 ]
-keywords = ["ai", "claude", "anthropic", "agents", "decision", "council", "multi-agent"]
+keywords = ["ai", "claude", "claude-fable-5", "fable-5", "anthropic", "agents", "decision", "council", "multi-agent", "oracle", "brier"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: MIT License",

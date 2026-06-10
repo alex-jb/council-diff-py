@@ -25,6 +25,20 @@ class CouncilVoice:
 
 
 @dataclass
+class OracleVerdict:
+    """Mythos-class adjudication over the 5-voice council.
+
+    Returned on CouncilResult.oracle when `oracle="fable-5"` is passed to
+    deliberate(). Brier-audited separately at resolution.
+    """
+    model: str  # e.g. "claude-fable-5"
+    recommendation: Recommendation
+    score: int  # 0-100 — Oracle's own confidence the decision is correct
+    verdict: str  # 2-3 sentences naming which voices it sided with
+    override_reason: str | None = None  # set only when Oracle disagrees with the council
+
+
+@dataclass
 class CouncilResult:
     domain: Domain
     decision: str
@@ -33,6 +47,7 @@ class CouncilResult:
     agreement_score: float
     recommendation: Recommendation
     computed_at: str
+    oracle: OracleVerdict | None = None  # set when deliberate(oracle="fable-5") was used
 
 
 DOMAIN_VOICES: dict[Domain, list[dict[str, str]]] = {
@@ -126,6 +141,7 @@ class CouncilDiff:
         decision: str,
         context: str | None = None,
         custom_voices: list[dict[str, str]] | None = None,
+        oracle: str | None = None,  # "fable-5" or any Anthropic model ID
     ) -> CouncilResult:
         system = _build_system(domain, custom_voices)
         user = f"DECISION: {decision}\n\nCONTEXT:\n{context or '(no additional context)'}\n\nDeliberate."
@@ -136,21 +152,14 @@ class CouncilDiff:
             messages=[{"role": "user", "content": user}],
         )
         text = msg.content[0].text if msg.content else ""
-        cleaned = text.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned[7:]
-        elif cleaned.startswith("```"):
-            cleaned = cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        parsed = json.loads(cleaned.strip())
+        parsed = json.loads(_strip_fences(text))
         voices = [CouncilVoice(**v) for v in parsed["voices"]]
         scores = [v.score for v in voices]
         mean = sum(scores) / len(scores)
         var = sum((s - mean) ** 2 for s in scores) / len(scores)
         stddev = var**0.5
         agreement = max(0.0, min(1.0, 1 - stddev / 50))
-        return CouncilResult(
+        result = CouncilResult(
             domain=domain,
             decision=decision,
             voices=voices,
@@ -159,6 +168,75 @@ class CouncilDiff:
             recommendation=parsed["recommendation"],
             computed_at=datetime.now(timezone.utc).isoformat(),
         )
+        if oracle:
+            result.oracle = self._adjudicate(
+                decision=decision,
+                context=context,
+                council=result,
+                oracle_model=oracle,
+            )
+        return result
+
+    def _adjudicate(
+        self,
+        decision: str,
+        context: str | None,
+        council: CouncilResult,
+        oracle_model: str,
+    ) -> OracleVerdict:
+        """Mythos-class adjudication over the council. Authority to override.
+
+        Why: 5 mid-tier voices often hit "split" on hard calls. A flagship
+        model reads all 5 verdicts and either ratifies or overrides. Brier-
+        audited separately so we see when Oracle beats vs underperforms.
+        """
+        model_id = "claude-fable-5" if oracle_model == "fable-5" else oracle_model
+        voices_summary = "\n".join(
+            f"- {v.voice_display} ({v.score}/100): {v.verdict}\n    strength: {v.strength}\n    gap: {v.gap}"
+            for v in council.voices
+        )
+        system = (
+            "You are the Oracle. The council of 5 specialists has deliberated. Your job: read the 5 verdicts, "
+            "weigh which voice has the strongest grounding, and issue a single adjudication. You have authority "
+            "to OVERRIDE the council if their consensus misses something a flagship-tier reasoner would catch.\n\n"
+            "Output STRICT JSON. Be concrete. No hedging.\n\n"
+            "Schema:\n"
+            '{"recommendation":"go|wait|kill|split","score":<0-100>,"verdict":"<2-3 sentences naming which voices you side with>","override_reason":"<only if your recommendation differs from the council. Empty string otherwise.>"}'
+        )
+        user = (
+            f"DECISION: {decision}\n\n"
+            f"CONTEXT:\n{context or '(no additional context)'}\n\n"
+            f"COUNCIL CONSENSUS: {council.recommendation} (agreement {council.agreement_score})\n"
+            f"{council.consensus}\n\n"
+            f"THE 5 VOICES:\n{voices_summary}\n\nAdjudicate."
+        )
+        msg = self._client.messages.create(
+            model=model_id,
+            max_tokens=800,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        text = msg.content[0].text if msg.content else ""
+        parsed = json.loads(_strip_fences(text))
+        override = parsed.get("override_reason") or None
+        return OracleVerdict(
+            model=model_id,
+            recommendation=parsed["recommendation"],
+            score=int(parsed["score"]),
+            verdict=parsed["verdict"],
+            override_reason=override if override else None,
+        )
 
 
-__all__ = ["CouncilDiff", "CouncilResult", "CouncilVoice", "DOMAIN_VOICES"]
+def _strip_fences(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    return cleaned.strip()
+
+
+__all__ = ["CouncilDiff", "CouncilResult", "CouncilVoice", "OracleVerdict", "DOMAIN_VOICES"]

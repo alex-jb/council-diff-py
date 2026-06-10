@@ -6,6 +6,8 @@ from council_diff.brier import (
     brier_by_domain,
     brier_score,
     mean_brier,
+    oracle_brier_score,
+    oracle_vs_council,
     predicted_probability,
     resolve_prediction,
 )
@@ -138,3 +140,81 @@ def test_high_disagreement_council_split_recommendation_is_calibrated():
     # Both should be ~ 0.25 (random baseline)
     assert abs(brier_score(resolved_right) - 0.25) < 0.001
     assert abs(brier_score(resolved_wrong) - 0.25) < 0.001
+
+
+# ─── Oracle layer (v0.3.0+) ────────────────────────────────────────────
+
+
+def test_oracle_brier_score_returns_none_when_no_oracle_data():
+    p = resolve_prediction(_mkpred(), "go-was-right")
+    assert oracle_brier_score(p) is None
+
+
+def test_oracle_brier_score_perfect_when_confident_and_right():
+    # Oracle says go with conf=100, outcome was go-was-right (actual=1)
+    # p = 0.5 + (0.8 - 0.5) * 1.0 = 0.8 → brier = (0.8-1)² = 0.04
+    p = resolve_prediction(
+        _mkpred(oracle_recommendation="go", oracle_score=100, oracle_model="claude-fable-5"),
+        "go-was-right",
+    )
+    assert abs(oracle_brier_score(p) - 0.04) < 0.001
+
+
+def test_oracle_brier_score_max_when_confident_and_wrong():
+    # Same Oracle conf, but outcome was wrong (actual=0) → brier = (0.8-0)² = 0.64
+    p = resolve_prediction(
+        _mkpred(oracle_recommendation="go", oracle_score=100, oracle_model="claude-fable-5"),
+        "go-was-wrong",
+    )
+    assert abs(oracle_brier_score(p) - 0.64) < 0.001
+
+
+def test_oracle_brier_score_low_confidence_pulls_to_05():
+    # Oracle says go with conf=0 → p=0.5 (coin flip)
+    # outcome go-was-right (actual=1) → brier = (0.5-1)² = 0.25
+    p = resolve_prediction(
+        _mkpred(oracle_recommendation="go", oracle_score=0, oracle_model="claude-fable-5"),
+        "go-was-right",
+    )
+    assert abs(oracle_brier_score(p) - 0.25) < 0.001
+
+
+def test_oracle_vs_council_returns_none_when_no_oracle_data():
+    preds = [resolve_prediction(_mkpred(), "go-was-right")]
+    assert oracle_vs_council(preds) is None
+
+
+def test_oracle_vs_council_counts_overrides_and_wins():
+    # Scenario 1: Oracle overrides council and wins
+    # Council go (p=0.8) vs Oracle kill (conf=90, p≈0.23); outcome go-was-wrong (actual=0)
+    # Council Brier ≈ 0.64, Oracle Brier ≈ 0.053 → Oracle wins the override
+    override_win = resolve_prediction(
+        _mkpred(
+            recommendation="go", agreement_score=1.0,
+            oracle_recommendation="kill", oracle_score=90, oracle_model="claude-fable-5",
+        ),
+        "go-was-wrong",
+    )
+    # Scenario 2: agreement, both right — counts as neither override nor mismatch
+    agree_win = resolve_prediction(
+        _mkpred(
+            recommendation="go", agreement_score=1.0,
+            oracle_recommendation="go", oracle_score=90, oracle_model="claude-fable-5",
+        ),
+        "go-was-right",
+    )
+    # Scenario 3: agreement go, right
+    no_override = resolve_prediction(
+        _mkpred(
+            recommendation="go", agreement_score=1.0,
+            oracle_recommendation="go", oracle_score=80, oracle_model="claude-fable-5",
+        ),
+        "go-was-right",
+    )
+    comp = oracle_vs_council([override_win, agree_win, no_override])
+    assert comp is not None
+    assert comp["n"] == 3
+    assert comp["oracle_overrides"] == 1
+    assert comp["oracle_override_wins"] == 1
+    # Oracle beats council on this synthetic set
+    assert comp["delta"] < 0
