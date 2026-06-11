@@ -31,11 +31,24 @@ class OracleVerdict:
     Returned on CouncilResult.oracle when `oracle="fable-5"` is passed to
     deliberate(). Brier-audited separately at resolution.
     """
-    model: str  # e.g. "claude-fable-5"
+    model: str  # e.g. "claude-fable-5" or "claude-sonnet-4-6" if downgraded
     recommendation: Recommendation
     score: int  # 0-100 — Oracle's own confidence the decision is correct
     verdict: str  # 2-3 sentences naming which voices it sided with
     override_reason: str | None = None  # set only when Oracle disagrees with the council
+    # v0.3.1 disclosure: per Anthropic policy, Mythos-class models enforce
+    # 30-day server-side retention; Sonnet 4.6 / Haiku 4.5 do not.
+    # Source: support.claude.com/en/articles/15425996
+    data_retention: Literal["30day-mythos", "zero"] = "30day-mythos"
+    downgraded: bool = False  # True if safe_mode forced Fable 5 -> Sonnet 4.6
+
+
+# Mythos-class models that carry Anthropic's 30-day data retention policy.
+# Keep in sync with the official Anthropic announcement.
+MYTHOS_MODELS: set[str] = {
+    "claude-fable-5",
+    "claude-opus-4-7-mythos",
+}
 
 
 @dataclass
@@ -123,6 +136,11 @@ def _build_system(domain: Domain, custom_voices: list[dict[str, str]] | None = N
 class CouncilDiff:
     api_key: str | None = None
     model: str = "claude-sonnet-4-6"
+    # v0.3.1 privacy guard: when True, any oracle="fable-5" request silently
+    # downgrades to claude-sonnet-4-6. Returned OracleVerdict.downgraded
+    # tells the caller what actually ran. Opt in for any product with a
+    # privacy claim that conflicts with 30-day retention.
+    safe_mode: bool = False
     _client: object = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
@@ -190,7 +208,10 @@ class CouncilDiff:
         model reads all 5 verdicts and either ratifies or overrides. Brier-
         audited separately so we see when Oracle beats vs underperforms.
         """
-        model_id = "claude-fable-5" if oracle_model == "fable-5" else oracle_model
+        requested = "claude-fable-5" if oracle_model == "fable-5" else oracle_model
+        # v0.3.1 safe_mode silently downgrades Mythos -> Sonnet 4.6
+        downgraded = self.safe_mode and requested in MYTHOS_MODELS
+        model_id = "claude-sonnet-4-6" if downgraded else requested
         voices_summary = "\n".join(
             f"- {v.voice_display} ({v.score}/100): {v.verdict}\n    strength: {v.strength}\n    gap: {v.gap}"
             for v in council.voices
@@ -225,6 +246,8 @@ class CouncilDiff:
             score=int(parsed["score"]),
             verdict=parsed["verdict"],
             override_reason=override if override else None,
+            data_retention="30day-mythos" if model_id in MYTHOS_MODELS else "zero",
+            downgraded=downgraded,
         )
 
 
@@ -239,4 +262,4 @@ def _strip_fences(text: str) -> str:
     return cleaned.strip()
 
 
-__all__ = ["CouncilDiff", "CouncilResult", "CouncilVoice", "OracleVerdict", "DOMAIN_VOICES"]
+__all__ = ["CouncilDiff", "CouncilResult", "CouncilVoice", "OracleVerdict", "DOMAIN_VOICES", "MYTHOS_MODELS"]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "council-diff"
-version = "0.3.0"
+version = "0.3.1"
 description = "5-voice AI council for any decision, with optional Claude Fable 5 Oracle adjudication. Python port of github.com/alex-jb/council-diff."
 readme = "README.md"
 requires-python = ">=3.10"
